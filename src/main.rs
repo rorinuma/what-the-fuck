@@ -1,9 +1,12 @@
+use delay::Delay;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-use std::thread::sleep;
+use std::thread;
 use std::time::Duration;
+
+mod delay;
 
 struct Task {
     fut: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
@@ -12,12 +15,20 @@ struct Task {
 
 const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop_waker);
 
+async fn say_hello(name: &str) {
+    println!("hello, {name}!");
+    Delay::new(Duration::from_secs(2)).await;
+    println!("bye, {name}!");
+}
+
 async fn my_async_function() {
-    println!("async function running");
+    say_hello("hmmmm").await;
+    say_hello("mmmmmm").await;
+}
 
-    sleep(Duration::from_secs(2));
-
-    println!("it's finished");
+async fn other_function() {
+    println!("it's running!!");
+    println!("it's running!!");
 }
 
 fn main() {
@@ -28,18 +39,30 @@ fn main() {
         queue: queue.clone(),
     }));
 
-    while let Some(task) = queue.lock().unwrap().pop_front() {
-        unsafe {
-            let waker = make_waker(task.clone());
-            let mut cx = Context::from_waker(&waker);
+    queue.lock().unwrap().push_back(Arc::new(Task {
+        fut: Mutex::new(Box::pin(other_function())),
+        queue: queue.clone(),
+    }));
 
-            let mut fut = task.fut.lock().unwrap();
-            match fut.as_mut().poll(&mut cx) {
-                Poll::Pending => {
-                    task.queue.lock().unwrap().push_back(task.clone());
+    loop {
+        let task_opt = queue.lock().unwrap().pop_front();
+
+        if let Some(task) = task_opt {
+            unsafe {
+                let waker = make_waker(task.clone());
+                let mut cx = Context::from_waker(&waker);
+
+                let mut fut = task.fut.lock().unwrap();
+
+                match fut.as_mut().poll(&mut cx) {
+                    Poll::Pending => {
+                        task.queue.lock().unwrap().push_back(task.clone());
+                    }
+                    Poll::Ready(_) => println!("Task done"),
                 }
-                Poll::Ready(_) => println!("Task done!"),
             }
+        } else {
+            thread::sleep(Duration::from_millis(10));
         }
     }
 }
@@ -53,12 +76,11 @@ unsafe fn make_waker(task: Arc<Task>) -> Waker {
 
 unsafe fn clone(data: *const ()) -> RawWaker {
     unsafe {
-        let task = Arc::from_raw(data as *const Task);
+        let arc = Arc::from_raw(data as *const Task);
+        let cloned = arc.clone();
 
-        let task = task.clone();
-
-        let arc_raw = Arc::into_raw(task);
-        RawWaker::new(arc_raw as *const (), &VTABLE)
+        std::mem::forget(arc);
+        RawWaker::new(Arc::into_raw(cloned) as *const (), &VTABLE)
     }
 }
 
@@ -66,8 +88,6 @@ unsafe fn wake(data: *const ()) {
     unsafe {
         let task = Arc::from_raw(data as *const Task);
         task.queue.lock().unwrap().push_back(task.clone());
-
-        std::mem::forget(task);
     }
 }
 
@@ -75,6 +95,7 @@ unsafe fn wake_by_ref(data: *const ()) {
     unsafe {
         let task = Arc::from_raw(data as *const Task);
         task.queue.lock().unwrap().push_back(task.clone());
+
         std::mem::forget(task);
     }
 }
