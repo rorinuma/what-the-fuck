@@ -38,7 +38,6 @@ impl Future for Delay {
                 }
 
                 if let Some(w) = waker.lock().unwrap().take() {
-                    println!("waking up");
                     w.wake();
                 }
             });

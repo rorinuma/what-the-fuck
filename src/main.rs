@@ -2,8 +2,7 @@ use delay::Delay;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-use std::thread;
+use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 use std::time::Duration;
 
 mod delay;
@@ -54,15 +53,10 @@ fn main() {
 
                 let mut fut = task.fut.lock().unwrap();
 
-                match fut.as_mut().poll(&mut cx) {
-                    Poll::Pending => {
-                        task.queue.lock().unwrap().push_back(task.clone());
-                    }
-                    Poll::Ready(_) => println!("Task done"),
+                if fut.as_mut().poll(&mut cx).is_ready() {
+                    println!("Task done");
                 }
             }
-        } else {
-            thread::sleep(Duration::from_millis(10));
         }
     }
 }
